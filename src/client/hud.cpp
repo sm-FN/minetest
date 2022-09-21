@@ -55,7 +55,7 @@ Hud::Hud(Client *client, LocalPlayer *player,
 	this->player      = player;
 	this->inventory   = inventory;
 
-	m_hud_scaling      = g_settings->getFloat("hud_scaling");
+	m_hud_scaling      = g_settings->getFloat("hud_scaling", 0.5f, 20.0f);
 	m_scale_factor     = m_hud_scaling * RenderingEngine::getDisplayDensity();
 	m_hotbar_imagesize = std::floor(HOTBAR_IMAGE_SIZE *
 		RenderingEngine::getDisplayDensity() + 0.5f);
@@ -150,7 +150,7 @@ void Hud::drawItem(const ItemStack &item, const core::rect<s32>& rect,
 		bool selected)
 {
 	if (selected) {
-		/* draw hihlighting around selected item */
+		/* draw highlighting around selected item */
 		if (use_hotbar_selected_image) {
 			core::rect<s32> imgrect2 = rect;
 			imgrect2.UpperLeftCorner.X  -= (m_padding*2);
@@ -411,7 +411,7 @@ void Hud::drawLuaElements(const v3s16 &camera_offset)
 			case HUD_ELEM_WAYPOINT: {
 				if (!calculateScreenPos(camera_offset, e, &pos))
 					break;
-				v3f p_pos = player->getPosition() / BS;
+				
 				pos += v2s32(e->offset.X, e->offset.Y);
 				video::SColor color(255, (e->number >> 16) & 0xFF,
 										 (e->number >> 8)  & 0xFF,
@@ -429,6 +429,7 @@ void Hud::drawLuaElements(const v3s16 &camera_offset)
 				font->draw(text.c_str(), bounds + v2s32((e->align.X - 1.0) * bounds.getWidth() / 2, 0), color);
 				if (draw_precision) {
 					std::ostringstream os;
+					v3f p_pos = player->getPosition() / BS;
 					float distance = std::floor(precision * p_pos.getDistanceFrom(e->world_pos)) / precision;
 					os << distance << unit;
 					text = unescape_translate(utf8_to_wide(os.str()));

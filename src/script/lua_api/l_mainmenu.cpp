@@ -38,7 +38,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "client/client.h"
 #include "client/renderingengine.h"
 #include "network/networkprotocol.h"
-
+#include "content/mod_configuration.h"
 
 /******************************************************************************/
 std::string ModApiMainMenu::getTextData(lua_State *L, std::string name)
@@ -139,6 +139,14 @@ int ModApiMainMenu::l_start(lua_State *L)
 		data->password = getTextData(L,"password");
 		data->address  = getTextData(L,"address");
 		data->port     = getTextData(L,"port");
+
+		const auto val = getTextData(L, "allow_login_or_register");
+		if (val == "login")
+			data->allow_login_or_register = ELoginRegister::Login;
+		else if (val == "register")
+			data->allow_login_or_register = ELoginRegister::Register;
+		else
+			data->allow_login_or_register = ELoginRegister::Any;
 	}
 	data->serverdescription = getTextData(L,"serverdescription");
 	data->servername        = getTextData(L,"servername");
@@ -304,7 +312,11 @@ int ModApiMainMenu::l_get_games(lua_State *L)
 		lua_settable(L,    top_lvl2);
 
 		lua_pushstring(L,  "name");
-		lua_pushstring(L,  game.name.c_str());
+		lua_pushstring(L,  game.title.c_str());
+		lua_settable(L,    top_lvl2);
+
+		lua_pushstring(L,  "title");
+		lua_pushstring(L,  game.title.c_str());
 		lua_settable(L,    top_lvl2);
 
 		lua_pushstring(L,  "author");
@@ -356,6 +368,11 @@ int ModApiMainMenu::l_get_content_info(lua_State *L)
 	lua_pushstring(L, spec.author.c_str());
 	lua_setfield(L, -2, "author");
 
+	if (!spec.title.empty()) {
+		lua_pushstring(L, spec.title.c_str());
+		lua_setfield(L, -2, "title");
+	}
+
 	lua_pushinteger(L, spec.release);
 	lua_setfield(L, -2, "release");
 
@@ -393,6 +410,100 @@ int ModApiMainMenu::l_get_content_info(lua_State *L)
 }
 
 /******************************************************************************/
+int ModApiMainMenu::l_check_mod_configuration(lua_State *L)
+{
+	std::string worldpath = luaL_checkstring(L, 1);
+
+	ModConfiguration modmgr;
+
+	// Add all game mods
+	SubgameSpec gamespec = findWorldSubgame(worldpath);
+	modmgr.addGameMods(gamespec);
+	modmgr.addModsInPath(worldpath + DIR_DELIM + "worldmods", "worldmods");
+
+	// Add user-configured mods
+	std::vector<ModSpec> modSpecs;
+
+	luaL_checktype(L, 2, LUA_TTABLE);
+
+	lua_pushnil(L);
+	while (lua_next(L, 2)) {
+		// Ignore non-string keys
+		if (lua_type(L, -2) != LUA_TSTRING) {
+			throw LuaError(
+					"Unexpected non-string key in table passed to "
+					"core.check_mod_configuration");
+		}
+
+		std::string modpath = luaL_checkstring(L, -1);
+		lua_pop(L, 1);
+		std::string virtual_path = lua_tostring(L, -1);
+
+		modSpecs.emplace_back();
+		ModSpec &spec = modSpecs.back();
+		spec.name = fs::GetFilenameFromPath(modpath.c_str());
+		spec.path = modpath;
+		spec.virtual_path = virtual_path;
+		if (!parseModContents(spec)) {
+			throw LuaError("Not a mod!");
+		}
+	}
+
+	modmgr.addMods(modSpecs);
+	try {
+		modmgr.checkConflictsAndDeps();
+	} catch (const ModError &err) {
+		errorstream << err.what() << std::endl;
+
+		lua_newtable(L);
+
+		lua_pushboolean(L, false);
+		lua_setfield(L, -2, "is_consistent");
+
+		lua_newtable(L);
+		lua_setfield(L, -2, "unsatisfied_mods");
+
+		lua_newtable(L);
+		lua_setfield(L, -2, "satisfied_mods");
+
+		lua_pushstring(L, err.what());
+		lua_setfield(L, -2, "error_message");
+		return 1;
+	}
+
+
+	lua_newtable(L);
+
+	lua_pushboolean(L, modmgr.isConsistent());
+	lua_setfield(L, -2, "is_consistent");
+
+	lua_newtable(L);
+	int top = lua_gettop(L);
+	unsigned int index = 1;
+	for (const auto &spec : modmgr.getUnsatisfiedMods()) {
+		lua_pushnumber(L, index);
+		push_mod_spec(L, spec, true);
+		lua_settable(L, top);
+		index++;
+	}
+
+	lua_setfield(L, -2, "unsatisfied_mods");
+
+	lua_newtable(L);
+	top = lua_gettop(L);
+	index = 1;
+	for (const auto &spec : modmgr.getMods()) {
+		lua_pushnumber(L, index);
+		push_mod_spec(L, spec, false);
+		lua_settable(L, top);
+		index++;
+	}
+	lua_setfield(L, -2, "satisfied_mods");
+
+	return 1;
+}
+
+/******************************************************************************/
 int ModApiMainMenu::l_show_keys_menu(lua_State *L)
 {
 	GUIEngine* engine = getGuiEngine(L);
@@ -411,8 +522,8 @@ int ModApiMainMenu::l_show_keys_menu(lua_State *L)
 /******************************************************************************/
 int ModApiMainMenu::l_create_world(lua_State *L)
 {
-	const char *name	= luaL_checkstring(L, 1);
-	int gameidx			= luaL_checkinteger(L,2) -1;
+	const char *name   = luaL_checkstring(L, 1);
+	const char *gameid = luaL_checkstring(L, 2);
 
 	StringMap use_settings;
 	luaL_checktype(L, 3, LUA_TTABLE);
@@ -429,8 +540,11 @@ int ModApiMainMenu::l_create_world(lua_State *L)
 			+ sanitizeDirName(name, "world_");
 
 	std::vector<SubgameSpec> games = getAvailableGames();
-	if (gameidx < 0 || gameidx >= (int) games.size()) {
-		lua_pushstring(L, "Invalid game index");
+	auto game_it = std::find_if(games.begin(), games.end(), [gameid] (const SubgameSpec &spec) {
+		return spec.id == gameid;
+	});
+	if (game_it == games.end()) {
+		lua_pushstring(L, "Game ID not found");
 		return 1;
 	}
 
@@ -445,7 +559,7 @@ int ModApiMainMenu::l_create_world(lua_State *L)
 
 	// Create world if it doesn't exist
 	try {
-		loadGameConfAndInitWorld(path, name, games[gameidx], true);
+		loadGameConfAndInitWorld(path, name, *game_it, true);
 		lua_pushnil(L);
 	} catch (const BaseException &e) {
 		auto err = std::string("Failed to initialize world: ") + e.what();
@@ -860,6 +974,19 @@ int ModApiMainMenu::l_open_dir(lua_State *L)
 }
 
 /******************************************************************************/
+int ModApiMainMenu::l_share_file(lua_State *L)
+{
+#ifdef __ANDROID__
+	std::string path = luaL_checkstring(L, 1);
+	porting::shareFileAndroid(path);
+	lua_pushboolean(L, true);
+#else
+	lua_pushboolean(L, false);
+#endif
+	return 1;
+}
+
+/******************************************************************************/
 int ModApiMainMenu::l_do_async_callback(lua_State *L)
 {
 	MainMenuScripting *script = getScriptApi<MainMenuScripting>(L);
@@ -891,6 +1018,7 @@ void ModApiMainMenu::Initialize(lua_State *L, int top)
 	API_FCT(get_worlds);
 	API_FCT(get_games);
 	API_FCT(get_content_info);
+	API_FCT(check_mod_configuration);
 	API_FCT(start);
 	API_FCT(close);
 	API_FCT(show_keys_menu);
@@ -924,6 +1052,7 @@ void ModApiMainMenu::Initialize(lua_State *L, int top)
 	API_FCT(get_max_supp_proto);
 	API_FCT(open_url);
 	API_FCT(open_dir);
+	API_FCT(share_file);
 	API_FCT(do_async_callback);
 }
 

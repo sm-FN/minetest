@@ -27,10 +27,12 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 
 struct MapDrawControl
 {
-	// Overrides limits by drawing everything
-	bool range_all = false;
 	// Wanted drawing range
 	float wanted_range = 0.0f;
+	// Overrides limits by drawing everything
+	bool range_all = false;
+	// Allow rendering out of bounds
+	bool allow_noclip = false;
 	// show a wire frame for debugging
 	bool show_wireframe = false;
 };
@@ -81,9 +83,9 @@ public:
 		return false;
 	}
 
-	void drop()
+	void drop() override
 	{
-		ISceneNode::drop();
+		ISceneNode::drop(); // calls destructor
 	}
 
 	void updateCamera(v3f pos, v3f dir, f32 fov, v3s16 offset);
@@ -91,24 +93,22 @@ public:
 	/*
 		Forcefully get a sector from somewhere
 	*/
-	MapSector * emergeSector(v2s16 p);
-
-	//void deSerializeSector(v2s16 p2d, std::istream &is);
+	MapSector * emergeSector(v2s16 p) override;
 
 	/*
 		ISceneNode methods
 	*/
 
-	virtual void OnRegisterSceneNode();
+	virtual void OnRegisterSceneNode() override;
 
-	virtual void render()
+	virtual void render() override
 	{
 		video::IVideoDriver* driver = SceneManager->getVideoDriver();
 		driver->setTransform(video::ETS_WORLD, AbsoluteTransformation);
 		renderMap(driver, SceneManager->getSceneNodeRenderPass());
 	}
 
-	virtual const aabb3f &getBoundingBox() const
+	virtual const aabb3f &getBoundingBox() const override
 	{
 		return m_box;
 	}
@@ -130,7 +130,7 @@ public:
 	void renderPostFx(CameraMode cam_mode);
 
 	// For debug printing
-	virtual void PrintInfo(std::ostream &out);
+	void PrintInfo(std::ostream &out) override;
 
 	const MapDrawControl & getControl() const { return m_control; }
 	f32 getWantedRange() const { return m_control.wanted_range; }
@@ -176,6 +176,9 @@ private:
 		DrawDescriptor(v3s16 pos, const PartialMeshBuffer *buffer) :
 			m_pos(pos), m_partial_buffer(buffer), m_reuse_material(false), m_use_partial_buffer(true)
 		{}
+
+		scene::IMeshBuffer* getBuffer();
+		void draw(video::IVideoDriver* driver);
 	};
 
 	Client *m_client;

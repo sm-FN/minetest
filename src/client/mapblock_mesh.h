@@ -100,7 +100,7 @@ public:
 };
 
 /**
- * Implements a binary space partitioning tree 
+ * Implements a binary space partitioning tree
  * See also: https://en.wikipedia.org/wiki/Binary_space_partitioning
  */
 class MapBlockBspTree
@@ -140,20 +140,31 @@ private:
 	s32 root = -1; // index of the root node
 };
 
+/*
+ * PartialMeshBuffer
+ *
+ * Attach alternate `Indices` to an existing mesh buffer, to make it possible to use different
+ * indices with the same vertex buffer.
+ *
+ * Irrlicht does not currently support this: `CMeshBuffer` ties together a single vertex buffer
+ * and a single index buffer. There's no way to share these between mesh buffers.
+ *
+ */
 class PartialMeshBuffer
 {
 public:
-	PartialMeshBuffer(scene::SMeshBuffer *buffer, const std::vector<u16> &vertex_indexes) :
-			m_buffer(buffer), m_vertex_indexes(vertex_indexes)
+	PartialMeshBuffer(scene::SMeshBuffer *buffer, std::vector<u16> &&vertex_indexes) :
+			m_buffer(buffer), m_vertex_indexes(std::move(vertex_indexes))
 	{}
 
 	scene::IMeshBuffer *getBuffer() const { return m_buffer; }
 	const std::vector<u16> &getVertexIndexes() const { return m_vertex_indexes; }
 
 	void beforeDraw() const;
+	void afterDraw() const;
 private:
 	scene::SMeshBuffer *m_buffer;
-	std::vector<u16> m_vertex_indexes;
+	mutable std::vector<u16> m_vertex_indexes;
 };
 
 /*
@@ -210,6 +221,12 @@ public:
 			m_animation_force_timer--;
 	}
 
+	/// Radius of the bounding-sphere, in BS-space.
+	f32 getBoundingRadius() const { return m_bounding_radius; }
+
+	/// Center of the bounding-sphere, in BS-space, relative to block pos.
+	v3f getBoundingSphereCenter() const { return m_bounding_sphere_center; }
+
 	/// update transparent buffers to render towards the camera
 	void updateTransparentBuffers(v3f camera_pos, v3s16 block_pos);
 	void consolidateTransparentBuffers();
@@ -219,11 +236,22 @@ public:
 	{
 		return this->m_transparent_buffers;
 	}
+
 private:
+	struct AnimationInfo {
+		int frame; // last animation frame
+		int frame_offset;
+		TileLayer tile;
+	};
+
 	scene::IMesh *m_mesh[MAX_TILE_LAYERS];
 	MinimapMapblock *m_minimap_mapblock;
 	ITextureSource *m_tsrc;
 	IShaderSource *m_shdrsrc;
+
+	f32 m_bounding_radius;
+	// MapblockMeshGenerator uses the same as mapblock center
+	v3f m_bounding_sphere_center = v3f((MAP_BLOCKSIZE * 0.5f - 0.5f) * BS);
 
 	bool m_enable_shaders;
 	bool m_enable_vbo;
@@ -238,12 +266,10 @@ private:
 	// Maps mesh and mesh buffer (i.e. material) indices to base texture names
 	std::map<std::pair<u8, u32>, std::string> m_crack_materials;
 
-	// Animation info: texture animationi
+	// Animation info: texture animation
 	// Maps mesh and mesh buffer indices to TileSpecs
 	// Keys are pairs of (mesh index, buffer index in the mesh)
-	std::map<std::pair<u8, u32>, TileLayer> m_animation_tiles;
-	std::map<std::pair<u8, u32>, int> m_animation_frames; // last animation frame
-	std::map<std::pair<u8, u32>, int> m_animation_frame_offsets;
+	std::map<std::pair<u8, u32>, AnimationInfo> m_animation_info;
 
 	// Animation info: day/night transitions
 	// Last daynight_ratio value passed to animate()

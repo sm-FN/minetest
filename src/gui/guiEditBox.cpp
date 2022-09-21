@@ -178,6 +178,16 @@ void GUIEditBox::setTextMarkers(s32 begin, s32 end)
 	if (begin != m_mark_begin || end != m_mark_end) {
 		m_mark_begin = begin;
 		m_mark_end = end;
+
+		if (!m_passwordbox && m_operator && m_mark_begin != m_mark_end) {
+			// copy to primary selection
+			const s32 realmbgn = m_mark_begin < m_mark_end ? m_mark_begin : m_mark_end;
+			const s32 realmend = m_mark_begin < m_mark_end ? m_mark_end : m_mark_begin;
+
+			std::string s = stringw_to_utf8(Text.subString(realmbgn, realmend - realmbgn));
+			m_operator->copyToPrimarySelection(s.c_str());
+		}
+
 		sendGuiEvent(EGET_EDITBOX_MARKING_CHANGED);
 	}
 }
@@ -778,6 +788,32 @@ bool GUIEditBox::processMouse(const SEvent &event)
 			return true;
 		}
 		break;
+	case EMIE_MMOUSE_PRESSED_DOWN: {
+		if (!AbsoluteClippingRect.isPointInside(core::position2d<s32>(
+					event.MouseInput.X, event.MouseInput.Y)))
+			return false;
+
+		if (!Environment->hasFocus(this)) {
+			m_blink_start_time = porting::getTimeMs();
+		}
+
+		// move cursor and disable marking
+		m_cursor_pos = getCursorPos(event.MouseInput.X, event.MouseInput.Y);
+		m_mouse_marking = false;
+		setTextMarkers(m_cursor_pos, m_cursor_pos);
+
+		// paste from the primary selection
+		inputString([&] {
+			if (!m_operator)
+				return core::stringw();
+			const c8 *inserted_text_utf8 = m_operator->getTextFromPrimarySelection();
+			if (!inserted_text_utf8)
+				return core::stringw();
+			return utf8_to_stringw(inserted_text_utf8);
+		}());
+
+		return true;
+	}
 	default:
 		break;
 	}

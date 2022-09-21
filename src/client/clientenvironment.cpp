@@ -34,6 +34,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "settings.h"
 #include "shader.h"
 #include "content_cao.h"
+#include "porting.h"
 #include <algorithm>
 #include "client/renderingengine.h"
 
@@ -194,21 +195,24 @@ void ClientEnvironment::step(float dtime)
 		lplayer->applyControl(dtime_part, this);
 
 		// Apply physics
+		lplayer->gravity = 0;
 		if (!free_move) {
 			// Gravity
-			v3f speed = lplayer->getSpeed();
 			if (!is_climbing && !lplayer->in_liquid)
-				speed.Y -= lplayer->movement_gravity *
-					lplayer->physics_override_gravity * dtime_part * 2.0f;
+				// HACK the factor 2 for gravity is arbitrary and should be removed eventually
+				lplayer->gravity = 2 * lplayer->movement_gravity * lplayer->physics_override.gravity;
 
 			// Liquid floating / sinking
 			if (!is_climbing && lplayer->in_liquid &&
 					!lplayer->swimming_vertical &&
 					!lplayer->swimming_pitch)
-				speed.Y -= lplayer->movement_liquid_sink * dtime_part * 2.0f;
+				// HACK the factor 2 for gravity is arbitrary and should be removed eventually
+				lplayer->gravity = 2 * lplayer->movement_liquid_sink;
 
 			// Movement resistance
 			if (lplayer->move_resistance > 0) {
+				v3f speed = lplayer->getSpeed();
+
 				// How much the node's move_resistance blocks movement, ranges
 				// between 0 and 1. Should match the scale at which liquid_viscosity
 				// increase affects other liquid attributes.
@@ -231,15 +235,16 @@ void ClientEnvironment::step(float dtime)
 					(1 - resistance_factor);
 				v3f d = d_wanted.normalize() * (dl * dtime_part * 100.0f);
 				speed += d;
-			}
 
-			lplayer->setSpeed(speed);
+				lplayer->setSpeed(speed);
+			}
 		}
 
 		/*
 			Move the lplayer.
 			This also does collision detection.
 		*/
+
 		lplayer->move(dtime_part, this, position_max_increment,
 			&player_collisions);
 	}
@@ -305,6 +310,7 @@ void ClientEnvironment::step(float dtime)
 		node_at_lplayer = m_map->getNode(p);
 
 		u16 light = getInteriorLight(node_at_lplayer, 0, m_client->ndef());
+		lplayer->light_color = encode_light(light, 0); // this transfers light.alpha
 		final_color_blend(&lplayer->light_color, light, day_night_ratio);
 	}
 
@@ -511,4 +517,9 @@ void ClientEnvironment::getSelectedActiveObjects(
 				(current_intersection - shootline_on_map.start).getLengthSQ());
 		}
 	}
+}
+
+void ClientEnvironment::updateFrameTime()
+{
+	m_frame_time = porting::getTimeMs();
 }
